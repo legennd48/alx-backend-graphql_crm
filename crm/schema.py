@@ -1,9 +1,11 @@
 import graphene
 from graphene_django import DjangoObjectType
+from graphene_django.filter import DjangoFilterConnectionField
 from django.core.exceptions import ValidationError
 from django.db import transaction
 from decimal import Decimal, InvalidOperation
 from .models import Customer, Product, Order
+from .filters import CustomerFilter, ProductFilter, OrderFilter
 import re
 
 
@@ -12,18 +14,24 @@ class CustomerType(DjangoObjectType):
     class Meta:
         model = Customer
         fields = "__all__"
+        filter_fields = ['name', 'email', 'phone']
+        interfaces = (graphene.relay.Node,)
 
 
 class ProductType(DjangoObjectType):
     class Meta:
         model = Product
         fields = "__all__"
+        filter_fields = ['name', 'price', 'stock']
+        interfaces = (graphene.relay.Node,)
 
 
 class OrderType(DjangoObjectType):
     class Meta:
         model = Order
         fields = "__all__"
+        filter_fields = ['total_amount', 'order_date']
+        interfaces = (graphene.relay.Node,)
 
 
 # Custom Error Types
@@ -72,6 +80,37 @@ class CustomerInput(graphene.InputObjectType):
     name = graphene.String(required=True)
     email = graphene.String(required=True)
     phone = graphene.String()
+
+
+# Filter Input Types
+class CustomerFilterInput(graphene.InputObjectType):
+    name_icontains = graphene.String()
+    email_icontains = graphene.String()
+    created_at_gte = graphene.DateTime()
+    created_at_lte = graphene.DateTime()
+    phone_pattern = graphene.String()
+    phone_starts_with = graphene.String()
+
+
+class ProductFilterInput(graphene.InputObjectType):
+    name_icontains = graphene.String()
+    price_gte = graphene.Decimal()
+    price_lte = graphene.Decimal()
+    stock_gte = graphene.Int()
+    stock_lte = graphene.Int()
+    stock = graphene.Int()
+    low_stock = graphene.Boolean()
+
+
+class OrderFilterInput(graphene.InputObjectType):
+    total_amount_gte = graphene.Decimal()
+    total_amount_lte = graphene.Decimal()
+    order_date_gte = graphene.DateTime()
+    order_date_lte = graphene.DateTime()
+    customer_name = graphene.String()
+    product_name = graphene.String()
+    product_id = graphene.Int()
+    customer_email = graphene.String()
 
 
 # Utility Functions
@@ -309,23 +348,75 @@ class CreateOrder(graphene.Mutation):
             )
 
 
-# Query Class
+# Query Class with Filtering
 class Query(graphene.ObjectType):
-    all_customers = graphene.List(CustomerType)
-    all_products = graphene.List(ProductType)
-    all_orders = graphene.List(OrderType)
+    # Relay-style filtered connections
+    all_customers = DjangoFilterConnectionField(CustomerType, filterset_class=CustomerFilter)
+    all_products = DjangoFilterConnectionField(ProductType, filterset_class=ProductFilter)
+    all_orders = DjangoFilterConnectionField(OrderType, filterset_class=OrderFilter)
+    
+    # Simple filtered lists
+    customers = graphene.List(CustomerType, filter=CustomerFilterInput())
+    products = graphene.List(ProductType, filter=ProductFilterInput())
+    orders = graphene.List(OrderType, filter=OrderFilterInput())
+    
+    # Individual item queries
     customer = graphene.Field(CustomerType, id=graphene.Int(required=True))
     product = graphene.Field(ProductType, id=graphene.Int(required=True))
     order = graphene.Field(OrderType, id=graphene.Int(required=True))
 
-    def resolve_all_customers(self, info):
-        return Customer.objects.all()
+    def resolve_customers(self, info, filter=None):
+        queryset = Customer.objects.all()
+        if filter:
+            filter_dict = {k: v for k, v in filter.items() if v is not None}
+            # Convert input field names to filter field names
+            django_filter_dict = {}
+            for key, value in filter_dict.items():
+                if key == 'name_icontains':
+                    django_filter_dict['name__icontains'] = value
+                elif key == 'email_icontains':
+                    django_filter_dict['email__icontains'] = value
+                elif key == 'phone_starts_with':
+                    django_filter_dict['phone__startswith'] = value
+                else:
+                    django_filter_dict[key] = value
+            
+            queryset = queryset.filter(**django_filter_dict)
+        return queryset
 
-    def resolve_all_products(self, info):
-        return Product.objects.all()
+    def resolve_products(self, info, filter=None):
+        queryset = Product.objects.all()
+        if filter:
+            filter_dict = {k: v for k, v in filter.items() if v is not None}
+            django_filter_dict = {}
+            for key, value in filter_dict.items():
+                if key == 'name_icontains':
+                    django_filter_dict['name__icontains'] = value
+                elif key == 'low_stock' and value:
+                    django_filter_dict['stock__lt'] = 10
+                else:
+                    django_filter_dict[key] = value
+            
+            queryset = queryset.filter(**django_filter_dict)
+        return queryset
 
-    def resolve_all_orders(self, info):
-        return Order.objects.select_related('customer').prefetch_related('products')
+    def resolve_orders(self, info, filter=None):
+        queryset = Order.objects.select_related('customer').prefetch_related('products')
+        if filter:
+            filter_dict = {k: v for k, v in filter.items() if v is not None}
+            django_filter_dict = {}
+            for key, value in filter_dict.items():
+                if key == 'customer_name':
+                    django_filter_dict['customer__name__icontains'] = value
+                elif key == 'product_name':
+                    django_filter_dict['products__name__icontains'] = value
+                elif key == 'customer_email':
+                    django_filter_dict['customer__email__icontains'] = value
+                else:
+                    django_filter_dict[key] = value
+            
+            queryset = queryset.filter(**django_filter_dict).distinct()
+        return queryset
 
     def resolve_customer(self, info, id):
         try:
