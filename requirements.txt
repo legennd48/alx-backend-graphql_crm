@@ -1,0 +1,6 @@
+Django
+graphene-django
+django-filter
+django-crontab
+gql[requests]
+requests
