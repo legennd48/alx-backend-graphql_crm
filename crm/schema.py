@@ -348,6 +348,27 @@ class CreateOrder(graphene.Mutation):
             )
 
 
+class UpdateLowStockProducts(graphene.Mutation):
+    class Output:
+        updated_products = graphene.List(ProductType)
+        success = graphene.Boolean()
+        message = graphene.String()
+
+    @classmethod
+    def mutate(cls, root, info):
+        low_stock_products = Product.objects.filter(stock__lt=10)
+        updated = []
+        for product in low_stock_products:
+            product.stock += 10
+            product.save()
+            updated.append(product)
+        return cls(
+            updated_products=updated,
+            success=True,
+            message=f"{len(updated)} products restocked."
+        )
+
+
 # Query Class with Filtering
 class Query(graphene.ObjectType):
     # Relay-style filtered connections
@@ -443,3 +464,4 @@ class Mutation(graphene.ObjectType):
     bulk_create_customers = BulkCreateCustomers.Field()
     create_product = CreateProduct.Field()
     create_order = CreateOrder.Field()
+    update_low_stock_products = UpdateLowStockProducts.Field()
