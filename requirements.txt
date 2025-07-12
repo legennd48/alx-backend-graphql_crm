@@ -1,6 +1,6 @@
 Django
 graphene-django
 django-filter
-django-crontab
+django-crontab==0.7.1
 gql[requests]
 requests
