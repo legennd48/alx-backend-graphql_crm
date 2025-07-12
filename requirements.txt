@@ -4,3 +4,5 @@ django-filter
 django-crontab==0.7.1
 gql[requests]
 requests
+celery
+django-celery-beat
